@@ -1,0 +1,92 @@
+---
+- name: Collect system data on all hosts
+  hosts: all
+  gather_facts: yes
+
+  tasks:
+
+    # 1️⃣ Detect OS type
+    - name: Set OS type
+      set_fact:
+        os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
+
+    # 2️⃣ Linux disk
+    - name: Get disk space on Linux
+      ansible.builtin.shell: df -h / | awk 'NR==2 {print $4}'
+      register: linux_disk
+      changed_when: false
+      when: os_type == 'linux'
+
+    # 3️⃣ Windows disk
+    - name: Get disk space on Windows
+      ansible.windows.win_shell: |
+        (Get-PSDrive C).Free / 1GB -as [int]
+      register: windows_disk
+      changed_when: false
+      when: os_type == 'windows'
+
+    # 4️⃣ Normalize disk value
+    - name: Set disk space fact
+      set_fact:
+        disk_free: >-
+          {% if os_type == 'linux' %}
+            {{ linux_disk.stdout }}
+          {% else %}
+            {{ windows_disk.stdout }} GB
+          {% endif %}
+
+    # 5️⃣ Build host-level report
+    - name: Build system report
+      set_fact:
+        system_report:
+          inventory_host: "{{ inventory_hostname }}"
+          hostname: "{{ ansible_hostname }}"
+          os_family: "{{ ansible_os_family }}"
+          os_type: "{{ os_type }}"
+          cpu_count: "{{ ansible_processor_vcpus | default(ansible_processor_count) }}"
+          memory_mb: "{{ ansible_memtotal_mb }}"
+          disk_free: "{{ disk_free }}"
+          ip_address: >-
+            {% if ansible_os_family == 'Windows' %}
+            {{ ansible_ip_addresses | select('match', '^(192|10|172)') | list | first | default('N/A') }}
+            {% else %}
+            {{ ansible_default_ipv4.address | default('N/A') }}
+            {% endif %}
+
+
+# ==================================================================
+
+- name: Aggregate reports on controller
+  hosts: localhost
+  gather_facts: no
+  run_once: true
+
+  tasks:
+
+    # 6️⃣ Aggregate all host reports
+    - name: Build global system report
+      set_fact:
+        global_system_report: >-
+          {{
+            groups['all']
+            | map('extract', hostvars, 'system_report')
+            | list
+          }}
+
+    # 7️⃣ Ensure local reports directory exists
+    - name: Create reports directory
+      ansible.builtin.file:
+        path: ./reports
+        state: directory
+
+    # 8️⃣ Write ONE global JSON file
+    - name: Write global JSON report
+      ansible.builtin.copy:
+        content: "{{ global_system_report | to_nice_json }}"
+        dest: "./reports/global_system_report.json"
+
+    # 9️⃣ Show final aggregated result
+    - name: Show global report
+      debug:
+        var: global_system_report
+

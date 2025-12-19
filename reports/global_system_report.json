@@ -1,0 +1,32 @@
+[
+    {
+        "cpu_count": 12,
+        "disk_free": "  952G\n",
+        "hostname": "DESKTOP-FE0MSJL",
+        "inventory_host": "laptop",
+        "ip_address": " 172.21.44.130 ",
+        "memory_mb": 15747,
+        "os_family": "Debian",
+        "os_type": "linux"
+    },
+    {
+        "cpu_count": 12,
+        "disk_free": "  952G\n",
+        "hostname": "DESKTOP-FE0MSJL",
+        "inventory_host": "ubuntu-server",
+        "ip_address": " 172.21.44.130 ",
+        "memory_mb": 15747,
+        "os_family": "Debian",
+        "os_type": "linux"
+    },
+    {
+        "cpu_count": 12,
+        "disk_free": "  200\r\n GB\n",
+        "hostname": "DESKTOP-FE0MSJL",
+        "inventory_host": "windows-laptop",
+        "ip_address": " 172.21.16.1 ",
+        "memory_mb": 32273,
+        "os_family": "Windows",
+        "os_type": "windows"
+    }
+]

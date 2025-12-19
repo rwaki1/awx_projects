@@ -1,0 +1,16 @@
+- name: Write system report to JSON
+  hosts: all
+  gather_facts: yes
+
+  tasks:
+    - name: Save report as JSON
+      ansible.builtin.copy:
+        content: "{{ system_report | to_nice_json }}"
+        dest: "/tmp/{{ inventory_hostname }}_system_report.json"
+      when: ansible_os_family != "Windows"
+
+    - name: Save report as JSON (Windows)
+      ansible.windows.win_copy:
+        content: "{{ system_report | to_nice_json }}"
+        dest: "C:\\Temp\\{{ inventory_hostname }}_system_report.json"
+      when: ansible_os_family == "Windows"
