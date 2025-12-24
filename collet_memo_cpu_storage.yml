@@ -1,61 +1,94 @@
 ---
+# =========================================
+# Playbook: system_report.yml
+# Purpose: Collect system data on all hosts, handle failures, aggregate into one JSON file
+# Output: ./reports/global_system_report.json
+# =========================================
+
+# -----------------------------
+# PLAY 1: Collect system data on all hosts
+# -----------------------------
 - name: Collect system data on all hosts
   hosts: all
   gather_facts: yes
 
   tasks:
 
-    # 1️⃣ Detect OS type
-    - name: Set OS type
-      set_fact:
-        os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
+    - name: Collect system information safely
+      block:
 
-    # 2️⃣ Linux disk
-    - name: Get disk space on Linux
-      ansible.builtin.shell: df -h / | awk 'NR==2 {print $4}'
-      register: linux_disk
-      changed_when: false
-      when: os_type == 'linux'
+        # Detect OS type
+        - name: Set OS type
+          set_fact:
+            os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
 
-    # 3️⃣ Windows disk
-    - name: Get disk space on Windows
-      ansible.windows.win_shell: |
-        (Get-PSDrive C).Free / 1GB -as [int]
-      register: windows_disk
-      changed_when: false
-      when: os_type == 'windows'
+        # Linux disk
+        - name: Get disk space on Linux
+          ansible.builtin.shell: df -h / | awk 'NR==2 {print $4}'
+          register: linux_disk
+          changed_when: false
+          when: os_type == 'linux'
 
-    # 4️⃣ Normalize disk value
-    - name: Set disk space fact
-      set_fact:
-        disk_free: >-
-          {% if os_type == 'linux' %}
-            {{ linux_disk.stdout }}
-          {% else %}
-            {{ windows_disk.stdout }} GB
-          {% endif %}
+        # Windows disk
+        - name: Get disk space on Windows
+          ansible.windows.win_shell: |
+            (Get-PSDrive C).Free / 1GB -as [int]
+          register: windows_disk
+          changed_when: false
+          when: os_type == 'windows'
 
-    # 5️⃣ Build host-level report
-    - name: Build system report
-      set_fact:
-        system_report:
-          inventory_host: "{{ inventory_hostname }}"
-          hostname: "{{ ansible_hostname }}"
-          os_family: "{{ ansible_os_family }}"
-          os_type: "{{ os_type }}"
-          cpu_count: "{{ ansible_processor_vcpus | default(ansible_processor_count) }}"
-          memory_mb: "{{ ansible_memtotal_mb }}"
-          disk_free: "{{ disk_free }}"
-          ip_address: >-
-            {% if ansible_os_family == 'Windows' %}
-            {{ ansible_ip_addresses | select('match', '^(192|10|172)') | list | first | default('N/A') }}
-            {% else %}
-            {{ ansible_default_ipv4.address | default('N/A') }}
-            {% endif %}
+        # Normalize disk value
+        - name: Set disk space fact
+          set_fact:
+            disk_free: >-
+              {% if os_type == 'linux' %}
+                {{ linux_disk.stdout }}
+              {% else %}
+                {{ windows_disk.stdout }} GB
+              {% endif %}
+
+        # Mark host as healthy
+        - name: Mark host as healthy
+          set_fact:
+            host_status: "healthy"
+
+      rescue:
+
+        # If anything fails
+        - name: Mark host as failed
+          set_fact:
+            host_status: "failed"
+
+        - name: Capture failure reason
+          set_fact:
+            failure_reason: "{{ ansible_failed_result.msg | default('Unknown error') }}"
+
+      always:
+
+        # Build host-level report (always runs)
+        - name: Build system report
+          set_fact:
+            system_report:
+              inventory_host: "{{ inventory_hostname }}"
+              hostname: "{{ ansible_hostname | default('N/A') }}"
+              os_family: "{{ ansible_os_family | default('N/A') }}"
+              os_type: "{{ os_type | default('unknown') }}"
+              cpu_count: "{{ ansible_processor_vcpus | default(ansible_processor_count | default('N/A')) }}"
+              memory_mb: "{{ ansible_memtotal_mb | default('N/A') }}"
+              disk_free: "{{ disk_free | default('N/A') }}"
+              ip_address: >-
+                {% if ansible_os_family == 'Windows' %}
+                {{ ansible_ip_addresses | select('match', '^(192|10|172)') | list | first | default('N/A') }}
+                {% else %}
+                {{ ansible_default_ipv4.address | default('N/A') }}
+                {% endif %}
+              status: "{{ host_status | default('unknown') }}"
+              failure_reason: "{{ failure_reason | default('N/A') }}"
 
 
-# ==================================================================
-
+# -----------------------------
+# PLAY 2: Aggregate reports on controller
+# -----------------------------
 - name: Aggregate reports on controller
   hosts: localhost
   gather_facts: no
@@ -63,7 +96,7 @@
 
   tasks:
 
-    # 6️⃣ Aggregate all host reports
+    # Aggregate all host reports into one list
     - name: Build global system report
       set_fact:
         global_system_report: >-
@@ -73,19 +106,19 @@
             | list
           }}
 
-    # 7️⃣ Ensure local reports directory exists
+    # Ensure reports directory exists
     - name: Create reports directory
       ansible.builtin.file:
         path: ./reports
         state: directory
 
-    # 8️⃣ Write ONE global JSON file
+    # Write ONE JSON file containing all hosts
     - name: Write global JSON report
       ansible.builtin.copy:
         content: "{{ global_system_report | to_nice_json }}"
         dest: "./reports/global_system_report.json"
 
-    # 9️⃣ Show final aggregated result
+    # Show aggregated result in logs
     - name: Show global report
       debug:
         var: global_system_report
