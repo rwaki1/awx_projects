@@ -129,7 +129,12 @@
     - name: Evaluate Windows service compliance
       set_fact:
         service_compliance:
-          WinRM: "{{ 'running' if winrm_service.services[0].state == 'running' else 'stopped' }}"
+          WinRM: >-
+            {{
+              'running'
+              if winrm_service.services[0].state | lower == 'running'
+              else 'stopped'
+            }}
       when: ansible_os_family == "Windows"
 
     # -----------------------------
