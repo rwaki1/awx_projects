@@ -14,11 +14,14 @@
 
   tasks:
 
-    # Skip hosts that are not Debian/Ubuntu or Windows
+    # Skip unsupported OS hosts
     - name: Skip unsupported OS hosts
       meta: end_host
       when: ansible_os_family not in ['Debian', 'Windows']
 
+    # -----------------------------
+    # OS detection
+    # -----------------------------
     - name: Set OS type
       set_fact:
         os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
@@ -170,13 +173,13 @@
   run_once: true
 
   tasks:
-
     - name: Build global system report
       set_fact:
         global_system_report: >-
           {{
             groups['all']
             | map('extract', hostvars, 'system_report')
+            | select('defined')
             | list
           }}
 
