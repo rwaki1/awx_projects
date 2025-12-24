@@ -6,179 +6,160 @@
 # =========================================
 
 # -----------------------------
-# PLAY 1: Collect system data on all hosts
+# PLAY 1: Collect system data on supported hosts
 # -----------------------------
-- name: Collect system data on all hosts
+- name: Collect system data on supported hosts
   hosts: all
   gather_facts: yes
 
   tasks:
 
-    - name: Collect system information safely
-      block:
+    # Skip hosts that are not Debian/Ubuntu or Windows
+    - name: Skip unsupported OS hosts
+      meta: end_host
+      when: ansible_os_family not in ['Debian', 'Windows']
 
-        # -----------------------------
-        # OS detection
-        # -----------------------------
-        - name: Set OS type
-          set_fact:
-            os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
+    - name: Set OS type
+      set_fact:
+        os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
 
-        # -----------------------------
-        # Disk space
-        # -----------------------------
-        - name: Get disk space on Linux
-          ansible.builtin.shell: df -h / | awk 'NR==2 {print $4}'
-          register: linux_disk
-          changed_when: false
-          when: os_type == 'linux'
+    # -----------------------------
+    # Disk space
+    # -----------------------------
+    - name: Get disk space on Linux
+      ansible.builtin.shell: df -h / | awk 'NR==2 {print $4}'
+      register: linux_disk
+      changed_when: false
+      when: os_type == 'linux'
 
-        - name: Get disk space on Windows
-          ansible.windows.win_shell: |
-            (Get-PSDrive C).Free / 1GB -as [int]
-          register: windows_disk
-          changed_when: false
-          when: os_type == 'windows'
+    - name: Get disk space on Windows
+      ansible.windows.win_shell: (Get-PSDrive C).Free / 1GB -as [int]
+      register: windows_disk
+      changed_when: false
+      when: os_type == 'windows'
 
-        - name: Normalize disk space
-          set_fact:
-            disk_free: >-
-              {% if os_type == 'linux' %}
-              {{ linux_disk.stdout }}
-              {% else %}
-              {{ windows_disk.stdout }} GB
-              {% endif %}
+    - name: Normalize disk space
+      set_fact:
+        disk_free: >-
+          {% if os_type == 'linux' %}
+          {{ linux_disk.stdout }}
+          {% else %}
+          {{ windows_disk.stdout }} GB
+          {% endif %}
 
-        # -----------------------------
-        # PACKAGE COMPLIANCE
-        # -----------------------------
-        # Ubuntu
-        - name: Collect installed packages on Ubuntu
-          ansible.builtin.package_facts:
-            manager: auto
-          when: ansible_os_family == "Debian"
+    # -----------------------------
+    # PACKAGE COMPLIANCE
+    # -----------------------------
+    # Ubuntu/Debian
+    - name: Collect installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+      when: ansible_os_family == "Debian"
 
-        - name: Evaluate Ubuntu package compliance
-          set_fact:
-            package_compliance:
-              curl: "{{ 'ok' if 'curl' in ansible_facts.packages else 'missing' }}"
-              git: "{{ 'ok' if 'git' in ansible_facts.packages else 'missing' }}"
-              vim: "{{ 'ok' if 'vim' in ansible_facts.packages else 'missing' }}"
-          when: ansible_os_family == "Debian"
+    - name: Evaluate package compliance on Ubuntu
+      set_fact:
+        package_compliance:
+          curl: "{{ 'ok' if 'curl' in ansible_facts.packages else 'missing' }}"
+          git: "{{ 'ok' if 'git' in ansible_facts.packages else 'missing' }}"
+          vim: "{{ 'ok' if 'vim' in ansible_facts.packages else 'missing' }}"
+      when: ansible_os_family == "Debian"
 
-        # Windows – safe Chocolatey check
-        - name: Check if Chocolatey is installed
-          ansible.windows.win_shell: |
-            Get-Command choco -ErrorAction SilentlyContinue
-          register: choco_check
-          changed_when: false
-          failed_when: false
-          when: ansible_os_family == "Windows"
+    # Windows – safe Chocolatey check
+    - name: Check if Chocolatey is installed
+      ansible.windows.win_shell: Get-Command choco -ErrorAction SilentlyContinue
+      register: choco_check
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "Windows"
 
-        - name: Collect installed packages on Windows (Chocolatey)
-          ansible.windows.win_shell: choco list --local-only
-          register: choco_packages
-          changed_when: false
-          failed_when: false
-          when:
-            - ansible_os_family == "Windows"
-            - choco_check.stdout != ""
+    - name: Collect installed packages on Windows (Chocolatey)
+      ansible.windows.win_shell: choco list --local-only
+      register: choco_packages
+      changed_when: false
+      failed_when: false
+      when:
+        - ansible_os_family == "Windows"
+        - choco_check.stdout != ""
 
-        - name: Evaluate Windows package compliance
-          set_fact:
-            package_compliance:
-              git: >-
-                {{
-                  'ok'
-                  if choco_check.stdout != '' and 'git' in choco_packages.stdout
-                  else 'missing'
-                  if choco_check.stdout != ''
-                  else 'unknown'
-                }}
-              7zip: >-
-                {{
-                  'ok'
-                  if choco_check.stdout != '' and '7zip' in choco_packages.stdout
-                  else 'missing'
-                  if choco_check.stdout != ''
-                  else 'unknown'
-                }}
-          when: ansible_os_family == "Windows"
+    - name: Evaluate Windows package compliance
+      set_fact:
+        package_compliance:
+          git: >-
+            {{
+              'ok'
+              if choco_check.stdout != '' and 'git' in choco_packages.stdout
+              else 'missing'
+              if choco_check.stdout != ''
+              else 'not_installed'
+            }}
+          7zip: >-
+            {{
+              'ok'
+              if choco_check.stdout != '' and '7zip' in choco_packages.stdout
+              else 'missing'
+              if choco_check.stdout != ''
+              else 'not_installed'
+            }}
+      when: ansible_os_family == "Windows"
 
-        # -----------------------------
-        # SERVICE COMPLIANCE
-        # -----------------------------
-        # Ubuntu
-        - name: Collect Ubuntu services
-          ansible.builtin.service_facts:
-          when: ansible_os_family == "Debian"
+    # -----------------------------
+    # SERVICE COMPLIANCE
+    # -----------------------------
+    # Ubuntu/Debian
+    - name: Collect Ubuntu services
+      ansible.builtin.service_facts:
+      when: ansible_os_family == "Debian"
 
-        - name: Evaluate Ubuntu service compliance
-          set_fact:
-            service_compliance:
-              ssh: >-
-                {{
-                  'running'
-                  if ansible_facts.services['ssh.service'].state == 'running'
-                  else 'not_running'
-                }}
-          when: ansible_os_family == "Debian"
+    - name: Evaluate Ubuntu service compliance
+      set_fact:
+        service_compliance:
+          ssh: >-
+            {{ 'running' if ansible_facts.services['ssh.service'].state == 'running' else 'stopped' }}
+      when: ansible_os_family == "Debian"
 
-        # Windows
-        - name: Check WinRM service
-          ansible.windows.win_service_info:
-            name: WinRM
-          register: winrm_service
-          when: ansible_os_family == "Windows"
+    # Windows
+    - name: Check WinRM service
+      ansible.windows.win_service_info:
+        name: WinRM
+      register: winrm_service
+      when: ansible_os_family == "Windows"
 
-        - name: Evaluate Windows service compliance
-          set_fact:
-            service_compliance:
-              WinRM: "{{ 'running' if winrm_service.services[0].state == 'running' else 'not_running' }}"
-          when: ansible_os_family == "Windows"
+    - name: Evaluate Windows service compliance
+      set_fact:
+        service_compliance:
+          WinRM: "{{ 'running' if winrm_service.services[0].state == 'running' else 'stopped' }}"
+      when: ansible_os_family == "Windows"
 
-        # -----------------------------
-        # Mark host healthy
-        # -----------------------------
-        - name: Mark host as healthy
-          set_fact:
-            host_status: "healthy"
+    # -----------------------------
+    # Mark host healthy
+    # -----------------------------
+    - name: Mark host as healthy
+      set_fact:
+        host_status: "healthy"
 
-      rescue:
-
-        - name: Mark host as failed
-          set_fact:
-            host_status: "failed"
-
-        - name: Capture failure reason
-          set_fact:
-            failure_reason: "{{ ansible_failed_result.msg | default('Unknown error') }}"
-
-      always:
-
-        # -----------------------------
-        # Build host-level report
-        # -----------------------------
-        - name: Build system report
-          set_fact:
-            system_report:
-              inventory_host: "{{ inventory_hostname }}"
-              hostname: "{{ ansible_hostname | default('N/A') }}"
-              os_family: "{{ ansible_os_family | default('N/A') }}"
-              os_type: "{{ os_type | default('unknown') }}"
-              cpu_count: "{{ ansible_processor_vcpus | default(ansible_processor_count | default('N/A')) }}"
-              memory_mb: "{{ ansible_memtotal_mb | default('N/A') }}"
-              disk_free: "{{ disk_free | default('N/A') }}"
-              ip_address: >-
-                {% if ansible_os_family == 'Windows' %}
-                {{ ansible_ip_addresses | select('match', '^(10|172|192)') | list | first | default('N/A') }}
-                {% else %}
-                {{ ansible_default_ipv4.address | default('N/A') }}
-                {% endif %}
-              package_compliance: "{{ package_compliance | default({}) }}"
-              service_compliance: "{{ service_compliance | default({}) }}"
-              status: "{{ host_status | default('unknown') }}"
-              failure_reason: "{{ failure_reason | default('N/A') }}"
+    # -----------------------------
+    # Build host-level report
+    # -----------------------------
+    - name: Build system report
+      set_fact:
+        system_report:
+          inventory_host: "{{ inventory_hostname }}"
+          hostname: "{{ ansible_hostname | default('N/A') }}"
+          os_family: "{{ ansible_os_family }}"
+          os_type: "{{ os_type }}"
+          cpu_count: "{{ ansible_processor_vcpus | default(ansible_processor_count | default('N/A')) }}"
+          memory_mb: "{{ ansible_memtotal_mb | default('N/A') }}"
+          disk_free: "{{ disk_free | default('N/A') }}"
+          ip_address: >-
+            {% if ansible_os_family == 'Windows' %}
+            {{ ansible_ip_addresses | select('match', '^(10|172|192)') | list | first | default('N/A') }}
+            {% else %}
+            {{ ansible_default_ipv4.address | default('N/A') }}
+            {% endif %}
+          package_compliance: "{{ package_compliance | default({}) }}"
+          service_compliance: "{{ service_compliance | default({}) }}"
+          status: "{{ host_status | default('unknown') }}"
+          failure_reason: "{{ failure_reason | default('N/A') }}"
 
 # -----------------------------
 # PLAY 2: Aggregate reports
