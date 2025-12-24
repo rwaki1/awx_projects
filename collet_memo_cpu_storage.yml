@@ -52,6 +52,7 @@
         # -----------------------------
         # PACKAGE COMPLIANCE
         # -----------------------------
+        # Ubuntu
         - name: Collect installed packages on Ubuntu
           ansible.builtin.package_facts:
             manager: auto
@@ -65,22 +66,49 @@
               vim: "{{ 'ok' if 'vim' in ansible_facts.packages else 'missing' }}"
           when: ansible_os_family == "Debian"
 
-        - name: Collect installed packages on Windows
+        # Windows – safe Chocolatey check
+        - name: Check if Chocolatey is installed
+          ansible.windows.win_shell: |
+            Get-Command choco -ErrorAction SilentlyContinue
+          register: choco_check
+          changed_when: false
+          failed_when: false
+          when: ansible_os_family == "Windows"
+
+        - name: Collect installed packages on Windows (Chocolatey)
           ansible.windows.win_shell: choco list --local-only
           register: choco_packages
           changed_when: false
-          when: ansible_os_family == "Windows"
+          failed_when: false
+          when:
+            - ansible_os_family == "Windows"
+            - choco_check.stdout != ""
 
         - name: Evaluate Windows package compliance
           set_fact:
             package_compliance:
-              git: "{{ 'ok' if 'git' in choco_packages.stdout else 'missing' }}"
-              7zip: "{{ 'ok' if '7zip' in choco_packages.stdout else 'missing' }}"
+              git: >-
+                {{
+                  'ok'
+                  if choco_check.stdout != '' and 'git' in choco_packages.stdout
+                  else 'missing'
+                  if choco_check.stdout != ''
+                  else 'unknown'
+                }}
+              7zip: >-
+                {{
+                  'ok'
+                  if choco_check.stdout != '' and '7zip' in choco_packages.stdout
+                  else 'missing'
+                  if choco_check.stdout != ''
+                  else 'unknown'
+                }}
           when: ansible_os_family == "Windows"
 
         # -----------------------------
         # SERVICE COMPLIANCE
         # -----------------------------
+        # Ubuntu
         - name: Collect Ubuntu services
           ansible.builtin.service_facts:
           when: ansible_os_family == "Debian"
@@ -96,6 +124,7 @@
                 }}
           when: ansible_os_family == "Debian"
 
+        # Windows
         - name: Check WinRM service
           ansible.windows.win_service_info:
             name: WinRM
