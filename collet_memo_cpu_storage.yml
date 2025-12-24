@@ -67,7 +67,7 @@
           vim: "{{ 'ok' if 'vim' in ansible_facts.packages else 'missing' }}"
       when: ansible_os_family == "Debian"
 
-    # Windows – safe Chocolatey check
+    # Windows – Chocolatey + PATH detection
     - name: Check if Chocolatey is installed
       ansible.windows.win_shell: Get-Command choco -ErrorAction SilentlyContinue
       register: choco_check
@@ -75,7 +75,7 @@
       failed_when: false
       when: ansible_os_family == "Windows"
 
-    - name: Collect installed packages on Windows (Chocolatey)
+    - name: Collect installed Chocolatey packages
       ansible.windows.win_shell: choco list --local-only
       register: choco_packages
       changed_when: false
@@ -84,17 +84,17 @@
         - ansible_os_family == "Windows"
         - choco_check.stdout != ""
 
+    - name: Check if Git is installed in PATH
+      ansible.windows.win_shell: git --version
+      register: git_check
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "Windows"
+
     - name: Evaluate Windows package compliance
       set_fact:
         package_compliance:
-          git: >-
-            {{
-              'ok'
-              if choco_check.stdout != '' and 'git' in choco_packages.stdout
-              else 'missing'
-              if choco_check.stdout != ''
-              else 'not_installed'
-            }}
+          git: "{{ 'ok' if git_check.rc == 0 else 'missing' }}"
           7zip: >-
             {{
               'ok'
@@ -116,8 +116,7 @@
     - name: Evaluate Ubuntu service compliance
       set_fact:
         service_compliance:
-          ssh: >-
-            {{ 'running' if ansible_facts.services['ssh.service'].state == 'running' else 'stopped' }}
+          ssh: "{{ 'running' if ansible_facts.services['ssh.service'].state == 'running' else 'stopped' }}"
       when: ansible_os_family == "Debian"
 
     # Windows
