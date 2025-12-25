@@ -2,11 +2,12 @@
 # =========================================
 # Playbook: system_report.yml
 # Purpose: Collect system data + package & service compliance
+# Supported OS: Debian/Ubuntu, Windows
 # Output: ./reports/global_system_report.json
 # =========================================
 
 # -----------------------------
-# PLAY 1: Collect system data on supported hosts
+# PLAY 1: Collect system data
 # -----------------------------
 - name: Collect system data on supported hosts
   hosts: all
@@ -14,21 +15,23 @@
 
   tasks:
 
-    # Skip unsupported OS hosts
+    # ---------------------------------
+    # Skip unsupported OS
+    # ---------------------------------
     - name: Skip unsupported OS hosts
       meta: end_host
       when: ansible_os_family not in ['Debian', 'Windows']
 
-    # -----------------------------
-    # OS detection
-    # -----------------------------
+    # ---------------------------------
+    # OS type
+    # ---------------------------------
     - name: Set OS type
       set_fact:
         os_type: "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
 
-    # -----------------------------
+    # ---------------------------------
     # Disk space
-    # -----------------------------
+    # ---------------------------------
     - name: Get disk space on Linux
       ansible.builtin.shell: df -h / | awk 'NR==2 {print $4}'
       register: linux_disk
@@ -44,38 +47,43 @@
     - name: Normalize disk space
       set_fact:
         disk_free: >-
-          {% if os_type == 'linux' %}
-          {{ linux_disk.stdout }}
-          {% else %}
-          {{ windows_disk.stdout }} GB
-          {% endif %}
+          {{ linux_disk.stdout if os_type == 'linux'
+             else windows_disk.stdout ~ ' GB' }}
 
-    # -----------------------------
-    # PACKAGE COMPLIANCE
-    # -----------------------------
-    # Ubuntu/Debian
-    - name: Collect installed packages
+    # ---------------------------------
+    # PACKAGE COMPLIANCE — Debian
+    # ---------------------------------
+    - name: Collect installed packages (Debian)
       ansible.builtin.package_facts:
         manager: auto
       when: ansible_os_family == "Debian"
 
-    - name: Evaluate package compliance on Ubuntu
+    - name: Evaluate Debian package compliance
       set_fact:
         package_compliance:
-          curl: "{{ 'ok' if 'curl' in ansible_facts.packages else 'missing' }}"
-          git: "{{ 'ok' if 'git' in ansible_facts.packages else 'missing' }}"
-          vim: "{{ 'ok' if 'vim' in ansible_facts.packages else 'missing' }}"
+          curl: "{{ 'installed' if 'curl' in ansible_facts.packages else 'missing' }}"
+          git: "{{ 'installed' if 'git' in ansible_facts.packages else 'missing' }}"
+          vim: "{{ 'installed' if 'vim' in ansible_facts.packages else 'missing' }}"
       when: ansible_os_family == "Debian"
 
-    # Windows – Chocolatey + PATH detection
-    - name: Check if Chocolatey is installed
+    # ---------------------------------
+    # PACKAGE COMPLIANCE — Windows
+    # ---------------------------------
+    - name: Check Git in PATH (Windows)
+      ansible.windows.win_shell: git --version
+      register: git_check
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "Windows"
+
+    - name: Check Chocolatey
       ansible.windows.win_shell: Get-Command choco -ErrorAction SilentlyContinue
       register: choco_check
       changed_when: false
       failed_when: false
       when: ansible_os_family == "Windows"
 
-    - name: Collect installed Chocolatey packages
+    - name: Collect Chocolatey packages
       ansible.windows.win_shell: choco list --local-only
       register: choco_packages
       changed_when: false
@@ -84,79 +92,77 @@
         - ansible_os_family == "Windows"
         - choco_check.stdout != ""
 
-    - name: Check if Git is installed in PATH
-      ansible.windows.win_shell: git --version
-      register: git_check
-      changed_when: false
-      failed_when: false
-      when: ansible_os_family == "Windows"
-
     - name: Evaluate Windows package compliance
       set_fact:
         package_compliance:
-          git: "{{ 'ok' if git_check.rc == 0 else 'missing' }}"
+          git: "{{ 'installed' if git_check.rc == 0 else 'missing' }}"
           7zip: >-
             {{
-              'ok'
+              'installed'
               if choco_check.stdout != '' and '7zip' in choco_packages.stdout
               else 'missing'
-              if choco_check.stdout != ''
-              else 'not_installed'
             }}
       when: ansible_os_family == "Windows"
 
-    # -----------------------------
-    # SERVICE COMPLIANCE
-    # -----------------------------
-    # Ubuntu/Debian
-    - name: Collect Ubuntu services
+    # ---------------------------------
+    # SERVICE COMPLIANCE — Debian
+    # ---------------------------------
+    - name: Collect services (Debian)
       ansible.builtin.service_facts:
       when: ansible_os_family == "Debian"
 
-    - name: Evaluate Ubuntu service compliance
+    - name: Evaluate Debian service compliance
       set_fact:
         service_compliance:
-          ssh: "{{ 'running' if ansible_facts.services['ssh.service'].state == 'running' else 'stopped' }}"
+          ssh: >-
+            {{
+              'running'
+              if ansible_facts.services['ssh.service'].state == 'running'
+              else 'stopped'
+            }}
       when: ansible_os_family == "Debian"
 
-    # Windows
-    - name: Check WinRM service
+    # ---------------------------------
+    # SERVICE COMPLIANCE — Windows
+    # ---------------------------------
+    - name: Get WinRM service info
       ansible.windows.win_service_info:
         name: WinRM
       register: winrm_service
       when: ansible_os_family == "Windows"
 
-    - name: Evaluate Windows service compliance
+    - name: Evaluate WinRM service compliance
       set_fact:
         service_compliance:
           WinRM: >-
             {{
               'running'
-              if winrm_service.services[0].state | lower == 'running'
+              if winrm_service.services | length > 0
+                 and winrm_service.services[0].state | lower in ['running', 'started']
               else 'stopped'
             }}
       when: ansible_os_family == "Windows"
 
-    # -----------------------------
-    # Mark host healthy
-    # -----------------------------
+    # ---------------------------------
+    # Host status
+    # ---------------------------------
     - name: Mark host as healthy
       set_fact:
         host_status: "healthy"
 
-    # -----------------------------
-    # Build host-level report
-    # -----------------------------
+    # ---------------------------------
+    # Build per-host report
+    # ---------------------------------
     - name: Build system report
       set_fact:
         system_report:
           inventory_host: "{{ inventory_hostname }}"
-          hostname: "{{ ansible_hostname | default('N/A') }}"
+          hostname: "{{ ansible_hostname }}"
           os_family: "{{ ansible_os_family }}"
           os_type: "{{ os_type }}"
-          cpu_count: "{{ ansible_processor_vcpus | default(ansible_processor_count | default('N/A')) }}"
+          cpu_count: "{{ ansible_processor_vcpus | default('N/A') }}"
           memory_mb: "{{ ansible_memtotal_mb | default('N/A') }}"
-          disk_free: "{{ disk_free | default('N/A') }}"
+          disk_free: "{{ disk_free }}"
           ip_address: >-
             {% if ansible_os_family == 'Windows' %}
             {{ ansible_ip_addresses | select('match', '^(10|172|192)') | list | first | default('N/A') }}
@@ -165,8 +171,8 @@
             {% endif %}
           package_compliance: "{{ package_compliance | default({}) }}"
           service_compliance: "{{ service_compliance | default({}) }}"
-          status: "{{ host_status | default('unknown') }}"
-          failure_reason: "{{ failure_reason | default('N/A') }}"
+          status: "{{ host_status }}"
+          failure_reason: "N/A"
 
 # -----------------------------
 # PLAY 2: Aggregate reports
@@ -177,6 +183,7 @@
   run_once: true
 
   tasks:
+
     - name: Build global system report
       set_fact:
         global_system_report: >-
@@ -187,7 +194,7 @@
             | list
           }}
 
-    - name: Create reports directory
+    - name: Ensure reports directory exists
       ansible.builtin.file:
         path: ./reports
         state: directory
@@ -195,7 +202,7 @@
     - name: Write global JSON report
       ansible.builtin.copy:
         content: "{{ global_system_report | to_nice_json }}"
-        dest: "./reports/global_system_report.json"
+        dest: ./reports/global_system_report.json
 
     - name: Show global report
       debug:
