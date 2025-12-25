@@ -1,0 +1,76 @@
+---
+# =========================================
+# Playbook: system_remediation.yml
+# Purpose: Remediate missing packages & stopped services
+# Supported OS: Debian/Ubuntu, Windows
+# Safe: idempotent, no forced restarts
+# =========================================
+
+- name: Remediate system compliance issues
+  hosts: all
+  gather_facts: yes
+  become: true
+
+  tasks:
+
+    # ---------------------------------
+    # Skip unsupported OS
+    # ---------------------------------
+    - name: Skip unsupported OS hosts
+      meta: end_host
+      when: ansible_os_family not in ['Debian', 'Windows']
+
+    # ---------------------------------
+    # PACKAGE REMEDIATION — Debian
+    # ---------------------------------
+    - name: Ensure required packages are installed (Debian)
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+          - vim
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    # ---------------------------------
+    # SERVICE REMEDIATION — Debian
+    # ---------------------------------
+    - name: Ensure SSH service is running (Debian)
+      ansible.builtin.service:
+        name: ssh
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian"
+
+    # ---------------------------------
+    # PACKAGE REMEDIATION — Windows
+    # ---------------------------------
+    - name: Ensure Chocolatey is installed (Windows)
+      ansible.windows.win_chocolatey:
+        name: chocolatey
+        state: present
+      when: ansible_os_family == "Windows"
+
+    - name: Ensure Git is installed (Windows)
+      ansible.windows.win_chocolatey:
+        name: git
+        state: present
+      when: ansible_os_family == "Windows"
+
+    - name: Ensure 7zip is installed (Windows)
+      ansible.windows.win_chocolatey:
+        name: 7zip
+        state: present
+      when: ansible_os_family == "Windows"
+
+    # ---------------------------------
+    # SERVICE REMEDIATION — Windows
+    # ---------------------------------
+    - name: Ensure WinRM service is running (Windows)
+      ansible.windows.win_service:
+        name: WinRM
+        state: started
+        start_mode: auto
+      when: ansible_os_family == "Windows"
+
