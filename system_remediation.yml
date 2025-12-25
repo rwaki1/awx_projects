@@ -1,9 +1,9 @@
 ---
 # =========================================
 # Playbook: system_remediation.yml
-# Purpose: Remediate missing packages & stopped services
+# Purpose: Remediate missing packages & services
 # Supported OS: Debian/Ubuntu, Windows
-# Safe: idempotent, no forced restarts
+# No external collections required
 # =========================================
 
 - name: Remediate system compliance issues
@@ -20,9 +20,9 @@
       meta: end_host
       when: ansible_os_family not in ['Debian', 'Windows']
 
-    # ---------------------------------
-    # PACKAGE REMEDIATION — Debian
-    # ---------------------------------
+    # =================================
+    # Debian / Ubuntu remediation
+    # =================================
     - name: Ensure required packages are installed (Debian)
       ansible.builtin.apt:
         name:
@@ -33,9 +33,6 @@
         update_cache: yes
       when: ansible_os_family == "Debian"
 
-    # ---------------------------------
-    # SERVICE REMEDIATION — Debian
-    # ---------------------------------
     - name: Ensure SSH service is running (Debian)
       ansible.builtin.service:
         name: ssh
@@ -43,31 +40,45 @@
         enabled: yes
       when: ansible_os_family == "Debian"
 
-    # ---------------------------------
-    # PACKAGE REMEDIATION — Windows
-    # ---------------------------------
-    - name: Ensure Chocolatey is installed (Windows)
-      ansible.windows.win_chocolatey:
-        name: chocolatey
-        state: present
+    # =================================
+    # Windows remediation
+    # =================================
+
+    # --- Chocolatey bootstrap ---
+    - name: Check if Chocolatey is installed
+      ansible.windows.win_shell: Get-Command choco -ErrorAction SilentlyContinue
+      register: choco_check
+      changed_when: false
+      failed_when: false
       when: ansible_os_family == "Windows"
 
+    - name: Install Chocolatey if missing
+      ansible.windows.win_shell: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = 3072
+        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+      when:
+        - ansible_os_family == "Windows"
+        - choco_check.stdout == ""
+
+    # --- Install Git ---
     - name: Ensure Git is installed (Windows)
-      ansible.windows.win_chocolatey:
-        name: git
-        state: present
+      ansible.windows.win_shell: |
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+          choco install git -y
+        }
       when: ansible_os_family == "Windows"
 
+    # --- Install 7zip ---
     - name: Ensure 7zip is installed (Windows)
-      ansible.windows.win_chocolatey:
-        name: 7zip
-        state: present
+      ansible.windows.win_shell: |
+        if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+          choco install 7zip -y
+        }
       when: ansible_os_family == "Windows"
 
-    # ---------------------------------
-    # SERVICE REMEDIATION — Windows
-    # ---------------------------------
-    - name: Ensure WinRM service is running (Windows)
+    # --- Ensure WinRM running ---
+    - name: Ensure WinRM service is running
       ansible.windows.win_service:
         name: WinRM
         state: started
