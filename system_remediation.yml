@@ -3,13 +3,12 @@
 # Playbook: system_remediation.yml
 # Purpose: Remediate missing packages & services
 # Supported OS: Debian/Ubuntu, Windows
-# No external collections required
+# Safe for mixed OS environments
 # =========================================
 
 - name: Remediate system compliance issues
   hosts: all
   gather_facts: yes
-  become: true
 
   tasks:
 
@@ -23,7 +22,7 @@
     # =================================
     # Debian / Ubuntu remediation
     # =================================
-    - name: Ensure required packages are installed (Debian)
+    - name: Install required packages (Debian)
       ansible.builtin.apt:
         name:
           - curl
@@ -31,6 +30,7 @@
           - vim
         state: present
         update_cache: yes
+      become: true
       when: ansible_os_family == "Debian"
 
     - name: Ensure SSH service is running (Debian)
@@ -38,13 +38,13 @@
         name: ssh
         state: started
         enabled: yes
+      become: true
       when: ansible_os_family == "Debian"
 
     # =================================
     # Windows remediation
     # =================================
 
-    # --- Chocolatey bootstrap ---
     - name: Check if Chocolatey is installed
       ansible.windows.win_shell: Get-Command choco -ErrorAction SilentlyContinue
       register: choco_check
@@ -61,7 +61,6 @@
         - ansible_os_family == "Windows"
         - choco_check.stdout == ""
 
-    # --- Install Git ---
     - name: Ensure Git is installed (Windows)
       ansible.windows.win_shell: |
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -69,7 +68,6 @@
         }
       when: ansible_os_family == "Windows"
 
-    # --- Install 7zip ---
     - name: Ensure 7zip is installed (Windows)
       ansible.windows.win_shell: |
         if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
@@ -77,8 +75,7 @@
         }
       when: ansible_os_family == "Windows"
 
-    # --- Ensure WinRM running ---
-    - name: Ensure WinRM service is running
+    - name: Ensure WinRM service is running (Windows)
       ansible.windows.win_service:
         name: WinRM
         state: started
