@@ -1,9 +1,7 @@
 ---
 # =========================================
 # Playbook: system_remediation.yml
-# Purpose: Remediate missing packages & services
-# Supported OS: Debian/Ubuntu, Windows
-# Safe for mixed OS environments
+# Purpose: Safe remediation with privilege awareness
 # =========================================
 
 - name: Remediate system compliance issues
@@ -20,7 +18,7 @@
       when: ansible_os_family not in ['Debian', 'Windows']
 
     # =================================
-    # Debian / Ubuntu remediation
+    # Debian remediation
     # =================================
     - name: Install required packages (Debian)
       ansible.builtin.apt:
@@ -42,8 +40,17 @@
       when: ansible_os_family == "Debian"
 
     # =================================
-    # Windows remediation
+    # Windows remediation (SAFE)
     # =================================
+
+    - name: Check if running as Administrator (Windows)
+      ansible.windows.win_shell: |
+        ([Security.Principal.WindowsPrincipal] `
+          [Security.Principal.WindowsIdentity]::GetCurrent()
+        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      register: is_admin
+      changed_when: false
+      when: ansible_os_family == "Windows"
 
     - name: Check if Chocolatey is installed
       ansible.windows.win_shell: Get-Command choco -ErrorAction SilentlyContinue
@@ -52,30 +59,31 @@
       failed_when: false
       when: ansible_os_family == "Windows"
 
-    - name: Install Chocolatey if missing
+    - name: Install Chocolatey (only if admin)
       ansible.windows.win_shell: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [System.Net.ServicePointManager]::SecurityProtocol = 3072
         iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
       when:
         - ansible_os_family == "Windows"
+        - is_admin.stdout | trim == 'True'
         - choco_check.stdout == ""
 
-    - name: Ensure Git is installed (Windows)
-      ansible.windows.win_shell: |
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-          choco install git -y
-        }
-      when: ansible_os_family == "Windows"
+    - name: Install Git (only if admin)
+      ansible.windows.win_shell: choco install git -y
+      when:
+        - ansible_os_family == "Windows"
+        - is_admin.stdout | trim == 'True'
+        - choco_check.stdout != ""
 
-    - name: Ensure 7zip is installed (Windows)
-      ansible.windows.win_shell: |
-        if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
-          choco install 7zip -y
-        }
-      when: ansible_os_family == "Windows"
+    - name: Install 7zip (only if admin)
+      ansible.windows.win_shell: choco install 7zip -y
+      when:
+        - ansible_os_family == "Windows"
+        - is_admin.stdout | trim == 'True'
+        - choco_check.stdout != ""
 
-    - name: Ensure WinRM service is running (Windows)
+    - name: Ensure WinRM service is running
       ansible.windows.win_service:
         name: WinRM
         state: started
